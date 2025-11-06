@@ -1,0 +1,67 @@
+name: Run SAIDI/SAIFI Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      states:
+        description: >-
+          JSON array of state abbreviations to process (e.g. ["al","ga"]).
+        required: false
+        default: '["al","ga"]'
+      aws_region:
+        description: AWS region that hosts the pipeline S3 buckets.
+        required: false
+        default: us-east-1
+
+env:
+  PYTHON_VERSION: '3.11'
+  REQUIREMENTS_FILE: requirements.txt
+
+jobs:
+  run-pipeline:
+    name: Process ${{ matrix.state }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        state: ${{ fromJson(github.event.inputs.states) }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f "${{ env.REQUIREMENTS_FILE }}" ]; then
+            pip install -r "${{ env.REQUIREMENTS_FILE }}"
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ github.event.inputs.aws_region || secrets.AWS_REGION || vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Run SAIDI/SAIFI pipeline
+        env:
+          STATE: ${{ matrix.state }}
+        run: |
+          echo "Running pipeline for state: $STATE"
+          python main.py "$STATE"
+
+      - name: Upload generated CSV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.state }}-saidi-saifi
+          path: |
+            ${{ matrix.state }}.csv
+            ${{ toUpper(matrix.state) }}.csv
+          if-no-files-found: warn
